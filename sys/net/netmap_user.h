@@ -305,6 +305,8 @@ typedef void (*nm_cb_t)(u_char *, const struct nm_pkthdr *, const u_char *d);
  *		^		bind the host (sw) ring pair
  *		*		bind host and NIC ring pairs (transparent)
  *		-NN		bind individual NIC ring pair
+ *		~NN		bind only RX queue number NN, leaving all
+ *				other queues attached to host stack
  *		{NN		bind master side of pipe NN
  *		}NN		bind slave side of pipe NN
  *		a suffix starting with / and the following flags,
@@ -623,7 +625,7 @@ nm_open(const char *ifname, const struct nmreq *req,
 	if (ifname[0] == 'n')
 		ifname += 7;
 	/* scan for a separator */
-	for (port = ifname; *port && !index("-*^{}/", *port); port++)
+	for (port = ifname; *port && !index("-~*^{}/", *port); port++)
 		;
 	namelen = port - ifname;
 	if (namelen >= sizeof(d->req.nr_name)) {
@@ -654,6 +656,10 @@ nm_open(const char *ifname, const struct nmreq *req,
 				break;
 			case '}': /* pipe (slave endoint) */
 				nr_flags = NR_REG_PIPE_SLAVE;
+				p_state = P_GETNUM;
+				break;
+			case '~': /* single RX ring */
+				nr_flags = NR_REG_SINGLE_RX;
 				p_state = P_GETNUM;
 				break;
 			case '/': /* start of flags */
