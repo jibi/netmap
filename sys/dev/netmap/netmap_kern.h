@@ -611,6 +611,23 @@ struct netmap_adapter {
 	u_int num_tx_desc;  /* number of descriptor in each queue */
 	u_int num_rx_desc;
 
+	u_int single_rx_mode; /*
+			       * when an adapter is in single RX queue mode,
+			       * only a specific RX queue is handle by Netmap
+			       * while all the other ones (including all
+			       * the TX ones) are left attached to the
+			       * host network stack
+			       */
+
+	/*
+	 * This is used to tell Netmap (when in single rx queue mode)
+	 * which RX queues are going through Netmap and which ones are
+	 * going through the host stack. TX queues remain always
+	 * attached to the host stack.
+	 */
+#define SINGLE_MODE_MAX_RX 512
+	uint64_t rx_queue_host_path_bitmap[SINGLE_MODE_MAX_RX / (sizeof(uint64_t) * 8)];
+
 	/* tx_rings and rx_rings are private but allocated
 	 * as a contiguous chunk of memory. Each array has
 	 * N+1 entries, for the adapter queues and for the host queue.
@@ -778,6 +795,24 @@ static __inline struct netmap_kring*
 NMR(struct netmap_adapter *na, enum txrx t)
 {
 	return (t == NR_TX ? na->tx_rings : na->rx_rings);
+}
+
+static __inline void
+nm_set_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	na->rx_queue_host_path_bitmap[ring_id / 64] |= (1ULL << (ring_id % 64));
+}
+
+static __inline void
+nm_clear_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	na->rx_queue_host_path_bitmap[ring_id / 64] &= ~(1ULL << (ring_id % 64));
+}
+
+static __inline int
+nm_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	return (na->rx_queue_host_path_bitmap[ring_id / 64] & (1ULL << (ring_id % 64)));
 }
 
 /*
@@ -1152,7 +1187,9 @@ nm_set_native_flags(struct netmap_adapter *na)
 #endif
 #if defined (__FreeBSD__)
 	na->if_transmit = ifp->if_transmit;
-	ifp->if_transmit = netmap_transmit;
+	if (!na->single_rx_mode) {
+		ifp->if_transmit = netmap_transmit;
+	}
 #elif defined (_WIN32)
 	(void)ifp; /* prevent a warning */
 	//XXX_ale can we just comment those?
@@ -1160,7 +1197,9 @@ nm_set_native_flags(struct netmap_adapter *na)
 	//ifp->if_transmit = netmap_transmit;
 #else
 	na->if_transmit = (void *)ifp->netdev_ops;
-	ifp->netdev_ops = &((struct netmap_hw_adapter *)na)->nm_ndo;
+	if (!na->single_rx_mode) {
+		ifp->netdev_ops = &((struct netmap_hw_adapter *)na)->nm_ndo;
+	}
 	((struct netmap_hw_adapter *)na)->save_ethtool = ifp->ethtool_ops;
 	ifp->ethtool_ops = &((struct netmap_hw_adapter*)na)->nm_eto;
 #endif

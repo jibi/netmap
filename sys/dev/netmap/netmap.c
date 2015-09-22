@@ -899,6 +899,11 @@ netmap_do_unregif(struct netmap_priv_d *priv)
 	na->active_fds--;
 	/* release exclusive use if it was requested on regif */
 	netmap_rel_exclusive(priv);
+
+	if (na->single_rx_mode) {
+		nm_clear_rx_ring_in_nm_mode(na, priv->np_qfirst[NR_RX]);
+	}
+
 	if (na->active_fds <= 0) {	/* last instance */
 
 		if (netmap_verbose)
@@ -1734,6 +1739,24 @@ netmap_interp_ringid(struct netmap_priv_d *priv, uint16_t ringid, uint32_t flags
 			priv->np_qlast[t] = j + 1;
 		}
 		break;
+	case NR_REG_SINGLE_RX:
+		if (i >= na->num_rx_rings || i >= SINGLE_MODE_MAX_RX) {
+			D("invalid ring id %d", i);
+			return EINVAL;
+		}
+
+		j = i;
+		if (j >= nma_get_nrings(na, NR_RX)) {
+			j = 0;
+		}
+
+		priv->np_qfirst[NR_RX] = j;
+		priv->np_qlast[NR_RX]  = j + 1;
+		priv->np_qfirst[NR_TX] = 0;
+		priv->np_qlast[NR_TX]  = 0;
+
+		nm_set_rx_ring_in_nm_mode(na, j);
+		break;
 	default:
 		D("invalid regif type %d", reg);
 		return EINVAL;
@@ -1958,6 +1981,21 @@ netmap_do_regif(struct netmap_priv_d *priv, struct netmap_adapter *na,
 	int error;
 
 	NMG_LOCK_ASSERT();
+
+	if (na->na_refcount > 2) {
+		if (na->single_rx_mode && ((flags & NR_REG_MASK) != NR_REG_SINGLE_RX)) {
+			D("Adapter already opened in NR_REG_SINGLE_RX mode");
+			error = EINVAL;
+			goto err;
+		} else if ((!na->single_rx_mode) && ((flags & NR_REG_MASK) == NR_REG_SINGLE_RX)) {
+			D("Adapter already opened in mode incompatible with NR_REG_SINGLE_RX");
+			error = EINVAL;
+			goto err;
+		}
+	}
+
+	na->single_rx_mode = ((flags & NR_REG_MASK) == NR_REG_SINGLE_RX);
+
 	/* ring configuration may have changed, fetch from the card */
 	netmap_update_config(na);
 	priv->np_na = na;     /* store the reference */
@@ -2653,6 +2691,8 @@ netmap_attach_common(struct netmap_adapter *na)
 		na->nm_notify = netmap_notify;
 	na->active_fds = 0;
 
+	bzero(na->rx_queue_host_path_bitmap, sizeof(na->rx_queue_host_path_bitmap));
+
 	if (na->nm_mem == NULL)
 		/* use the global allocator */
 		na->nm_mem = &nm_mem;
@@ -3098,8 +3138,18 @@ netmap_common_irq(struct ifnet *ifp, u_int q, u_int *work_done)
 	kring = NMR(na, t) + q;
 
 	if (t == NR_RX) {
+		if (na->single_rx_mode) {
+			if (!nm_rx_ring_in_nm_mode(na, kring->ring_id)) {
+				return 0;
+			}
+		}
+
 		kring->nr_kflags |= NKR_PENDINTR;	// XXX atomic ?
 		*work_done = 1; /* do not fire napi again */
+	} else { /* NR_TX */
+		if (na->single_rx_mode) {
+			return 0;
+		}
 	}
 	kring->nm_notify(kring, 0);
 	return 1;

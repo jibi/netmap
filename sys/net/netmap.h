@@ -522,6 +522,7 @@ enum {	NR_REG_DEFAULT	= 0,	/* backward compat, should not be used. */
 	NR_REG_ONE_NIC	= 4,
 	NR_REG_PIPE_MASTER = 5,
 	NR_REG_PIPE_SLAVE = 6,
+	NR_REG_SINGLE_RX = 7,
 };
 /* monitor uses the NR_REG to select the rings to monitor */
 #define NR_MONITOR_TX	0x100
