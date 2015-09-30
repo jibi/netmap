@@ -901,7 +901,7 @@ netmap_do_unregif(struct netmap_priv_d *priv)
 	netmap_rel_exclusive(priv);
 
 	if (na->single_rx_mode) {
-		nm_clear_rx_ring_in_nm_mode(na, priv->np_qfirst[NR_RX]);
+		nm_clear_rx_ring_req_in_nm_mode(na, priv->np_qfirst[NR_RX]);
 	}
 
 	if (na->active_fds <= 0) {	/* last instance */
@@ -938,7 +938,20 @@ netmap_do_unregif(struct netmap_priv_d *priv)
 		/* delete rings and buffers */
 		netmap_mem_rings_delete(na);
 		na->nm_krings_delete(na);
+	} else {
+		if (na->single_rx_mode) {
+			/*
+			 * call nm_register() (and in turn
+			 * netmap_reset()) to take off the current RX
+			 * ring from Netmap mode (and put it in host
+			 * mode)
+			 */
+			na->nm_register(na, 1);
+		}
 	}
+
+	memcpy(na->rx_queue_bitmap, na->rx_queue_req_bitmap, sizeof(na->rx_queue_bitmap));
+
 	/* possibily decrement counter of tx_si/rx_si users */
 	netmap_unset_ringid(priv);
 	/* delete the nifp */
@@ -1755,7 +1768,7 @@ netmap_interp_ringid(struct netmap_priv_d *priv, uint16_t ringid, uint32_t flags
 		priv->np_qfirst[NR_TX] = 0;
 		priv->np_qlast[NR_TX]  = 0;
 
-		nm_set_rx_ring_in_nm_mode(na, j);
+		nm_set_rx_ring_req_in_nm_mode(na, j);
 		break;
 	default:
 		D("invalid regif type %d", reg);
@@ -2055,7 +2068,18 @@ netmap_do_regif(struct netmap_priv_d *priv, struct netmap_adapter *na,
 		error = na->nm_register(na, 1); /* mode on */
 		if (error) 
 			goto err_del_if;
+	} else {
+		if (na->single_rx_mode) {
+			/*
+			 * call nm_register() (and in turn
+			 * netmap_reset()) to put the new RX requested
+			 * ring in Netmap mode
+			 */
+			na->nm_register(na, 1);
+		}
 	}
+
+	memcpy(na->rx_queue_bitmap, na->rx_queue_req_bitmap, sizeof(na->rx_queue_bitmap));
 
 	/*
 	 * advertise that the interface is ready by setting np_nifp.
@@ -2691,7 +2715,8 @@ netmap_attach_common(struct netmap_adapter *na)
 		na->nm_notify = netmap_notify;
 	na->active_fds = 0;
 
-	bzero(na->rx_queue_host_path_bitmap, sizeof(na->rx_queue_host_path_bitmap));
+	bzero(na->rx_queue_bitmap,     sizeof(na->rx_queue_bitmap));
+	bzero(na->rx_queue_req_bitmap, sizeof(na->rx_queue_req_bitmap));
 
 	if (na->nm_mem == NULL)
 		/* use the global allocator */
@@ -3055,12 +3080,18 @@ netmap_reset(struct netmap_adapter *na, enum txrx tx, u_int n,
 	 * - let the *sync() fixup at the end.
 	 */
 	if (tx == NR_TX) {
+		if (na->single_rx_mode)
+			return NULL;
+
 		if (n >= na->num_tx_rings)
 			return NULL;
 		kring = na->tx_rings + n;
 		// XXX check whether we should use hwcur or rcur
 		new_hwofs = kring->nr_hwcur - new_cur;
 	} else {
+		if (na->single_rx_mode && !nm_rx_ring_req_in_nm_mode(na, n))
+			return NULL;
+
 		if (n >= na->num_rx_rings)
 			return NULL;
 		kring = na->rx_rings + n;

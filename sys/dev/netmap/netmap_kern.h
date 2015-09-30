@@ -620,13 +620,25 @@ struct netmap_adapter {
 			       */
 
 	/*
-	 * This is used to tell Netmap (when in single rx queue mode)
-	 * which RX queues are going through Netmap and which ones are
-	 * going through the host stack. TX queues remain always
-	 * attached to the host stack.
+	 * Tell Netmap (when in single rx queue mode) which RX queues
+	 * are going through Netmap and which ones are going through the
+	 * host stack. TX queues remain always attached to the host
+	 * stack.
+	 *
+	 * There are two bitmaps:
+	 * * rx_queue_bitmap, which keeps track of the rings that are
+	 *   actually in nm mode
+	 * * rx_queue_req_bitmap, which keeps track of the rings
+	 *   requested by the user to be in Netmap mode
+	 *
+	 * the second bitmap is used to avoid access to rings that are
+	 * supposed to be in Netmap mode, but are not yet configured
+	 * (i.e. to avoid races between the moment when the
+	 * rx_queue_bitmap is modified and the call to netmap_reset())
 	 */
 #define SINGLE_MODE_MAX_RX 512
-	uint64_t rx_queue_host_path_bitmap[SINGLE_MODE_MAX_RX / (sizeof(uint64_t) * 8)];
+	uint64_t rx_queue_bitmap[SINGLE_MODE_MAX_RX / (sizeof(uint64_t) * 8)];
+	uint64_t rx_queue_req_bitmap[SINGLE_MODE_MAX_RX / (sizeof(uint64_t) * 8)];
 
 	/* tx_rings and rx_rings are private but allocated
 	 * as a contiguous chunk of memory. Each array has
@@ -798,22 +810,29 @@ NMR(struct netmap_adapter *na, enum txrx t)
 }
 
 static __inline void
-nm_set_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+nm_set_rx_ring_req_in_nm_mode(struct netmap_adapter *na, int ring_id)
 {
-	na->rx_queue_host_path_bitmap[ring_id / 64] |= (1ULL << (ring_id % 64));
+	na->rx_queue_req_bitmap[ring_id / 64] |= (1ULL << (ring_id % 64));
 }
 
 static __inline void
-nm_clear_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+nm_clear_rx_ring_req_in_nm_mode(struct netmap_adapter *na, int ring_id)
 {
-	na->rx_queue_host_path_bitmap[ring_id / 64] &= ~(1ULL << (ring_id % 64));
+	na->rx_queue_req_bitmap[ring_id / 64] &= ~(1ULL << (ring_id % 64));
+}
+
+static __inline int
+nm_rx_ring_req_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	return (na->rx_queue_req_bitmap[ring_id / 64] & (1ULL << (ring_id % 64)));
 }
 
 static __inline int
 nm_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
 {
-	return (na->rx_queue_host_path_bitmap[ring_id / 64] & (1ULL << (ring_id % 64)));
+	return (na->rx_queue_bitmap[ring_id / 64] & (1ULL << (ring_id % 64)));
 }
+
 
 /*
  * If the NIC is owned by the kernel
