@@ -2009,6 +2009,12 @@ netmap_do_regif(struct netmap_priv_d *priv, struct netmap_adapter *na,
 
 	na->single_rx_mode = ((flags & NR_REG_MASK) == NR_REG_SINGLE_RX);
 
+	if (na->single_rx_mode && nm_rx_ring_in_nm_mode(na, ringid)) {
+			D("ring already opened in NR_REG_SINGLE_RX mode");
+			error = EINVAL;
+			goto err;
+	}
+
 	/* ring configuration may have changed, fetch from the card */
 	netmap_update_config(na);
 	priv->np_na = na;     /* store the reference */
