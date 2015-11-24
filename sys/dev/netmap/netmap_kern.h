@@ -827,6 +827,18 @@ nm_rx_ring_req_in_nm_mode(struct netmap_adapter *na, int ring_id)
 	return (na->rx_queue_req_bitmap[ring_id / 64] & (1ULL << (ring_id % 64)));
 }
 
+static __inline void
+nm_set_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	na->rx_queue_bitmap[ring_id / 64] |= (1ULL << (ring_id % 64));
+}
+
+static __inline void
+nm_clear_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
+{
+	na->rx_queue_bitmap[ring_id / 64] &= ~(1ULL << (ring_id % 64));
+}
+
 static __inline int
 nm_rx_ring_in_nm_mode(struct netmap_adapter *na, int ring_id)
 {

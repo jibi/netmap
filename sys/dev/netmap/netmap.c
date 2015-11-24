@@ -930,6 +930,10 @@ netmap_do_unregif(struct netmap_priv_d *priv)
 		 * syscall is running.
 		 */
 		na->nm_register(na, 0); /* off, clear flags */
+		if (na->single_rx_mode) {
+			nm_clear_rx_ring_in_nm_mode(na, priv->np_qfirst[NR_RX]);
+		}
+
 		/* Wake up any sleeping threads. netmap_poll will
 		 * then return POLLERR
 		 * XXX The wake up now must happen during *_down(), when
@@ -949,8 +953,6 @@ netmap_do_unregif(struct netmap_priv_d *priv)
 			na->nm_register(na, 1);
 		}
 	}
-
-	memcpy(na->rx_queue_bitmap, na->rx_queue_req_bitmap, sizeof(na->rx_queue_bitmap));
 
 	/* possibily decrement counter of tx_si/rx_si users */
 	netmap_unset_ringid(priv);
@@ -2085,8 +2087,6 @@ netmap_do_regif(struct netmap_priv_d *priv, struct netmap_adapter *na,
 		}
 	}
 
-	memcpy(na->rx_queue_bitmap, na->rx_queue_req_bitmap, sizeof(na->rx_queue_bitmap));
-
 	/*
 	 * advertise that the interface is ready by setting np_nifp.
 	 * The barrier is needed because readers (poll, *SYNC and mmap)
@@ -3095,8 +3095,10 @@ netmap_reset(struct netmap_adapter *na, enum txrx tx, u_int n,
 		// XXX check whether we should use hwcur or rcur
 		new_hwofs = kring->nr_hwcur - new_cur;
 	} else {
-		if (na->single_rx_mode && !nm_rx_ring_req_in_nm_mode(na, n))
+		if (na->single_rx_mode && !nm_rx_ring_req_in_nm_mode(na, n)) {
+			nm_clear_rx_ring_in_nm_mode(na, n);
 			return NULL;
+		}
 
 		if (n >= na->num_rx_rings)
 			return NULL;
@@ -3137,6 +3139,7 @@ netmap_reset(struct netmap_adapter *na, enum txrx tx, u_int n,
 	 * We do the wakeup here, but the ring is not yet reconfigured.
 	 * However, we are under lock so there are no races.
 	 */
+	nm_set_rx_ring_in_nm_mode(na, n);
 	kring->nm_notify(kring, 0);
 	return kring->ring->slot;
 }
